@@ -2,7 +2,8 @@ extern crate uhd;
 
 use std::error::Error;
 
-use uhd::Usrp;
+use num_complex::Complex32;
+use uhd::{Usrp, TuneRequest, ReceiveStreamer, StreamArgs};
 
 fn main() -> Result<(), Box<dyn Error>> {
     let found_usrps = Usrp::find("")?;
@@ -107,6 +108,25 @@ fn probe_one_usrp(address: &str) -> Result<(), Box<dyn Error>> {
             }
         }
         println!("Local oscillators: {:?}", usrp.get_rx_lo_names(channel)?);
+    }
+
+    let channel = 0;
+    println!("Antennas: {:?}", usrp.get_rx_antennas(channel).unwrap());
+    usrp.set_rx_antenna("RX2", channel).unwrap();
+
+    usrp.set_rx_frequency(&TuneRequest::with_frequency(2446500000.0), channel).unwrap();
+    usrp.set_rx_sample_rate(15360000.0, channel).unwrap();
+    println!("Gain name: {:?}", usrp.get_rx_gain_names(channel).unwrap());
+    usrp.set_rx_gain(20.0, channel, "PGA").unwrap();
+
+    // usrp.set_rx_antenna(antenna, channel)
+
+    // usrp.get_rx_st
+    let mut stream = usrp.get_rx_stream::<Complex32>(&StreamArgs::builder().channels(vec![channel]).build()).unwrap();
+    let mut buff = [Complex32::default(); 2400 / 16];
+    for i in 0..(10){
+        stream.receive_simple(&mut buff).unwrap();
+        println!("Recived: {:?}", &buff[..16]);
     }
 
     Ok(())

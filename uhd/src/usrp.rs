@@ -10,7 +10,7 @@ use crate::receive_streamer::ReceiveStreamer;
 use crate::stream::{Item, StreamArgs, StreamArgsC};
 use crate::string_vector::StringVector;
 use crate::utils::copy_string;
-use crate::{DaughterBoardEeprom, TimeSpec, TuneRequest, TuneResult};
+use crate::{DaughterBoardEeprom, TimeSpec, TuneRequest, TuneResult, TransmitStreamer};
 
 /// A connection to a USRP device
 pub struct Usrp(uhd_sys::uhd_usrp_handle);
@@ -43,13 +43,13 @@ impl Usrp {
     /// Returns a list of registers on this USRP that can be read and written
     ///
     /// mboard: The board number (normally 0 if only one USRP is in use)
-    pub fn enumerate_registers(&self, mboard: usize) -> Result<Vec<String>, Error> {
-        let mut vector = StringVector::new()?;
-        check_status(unsafe {
-            uhd_sys::uhd_usrp_enumerate_registers(self.0, mboard as _, vector.handle_mut())
-        })?;
-        Ok(vector.into())
-    }
+    // pub fn enumerate_registers(&self, mboard: usize) -> Result<Vec<String>, Error> {
+    //     let mut vector = StringVector::new()?;
+    //     check_status(unsafe {
+    //         uhd_sys::uhd_usrp_enumerate_registers(self.0, mboard as _, vector.handle_mut())
+    //     })?;
+    //     Ok(vector.into())
+    // }
 
     /// Returns the antennas available for transmission
     pub fn get_tx_antennas(&self, channel: usize) -> Result<Vec<String>, Error> {
@@ -131,6 +131,15 @@ impl Usrp {
         let mut names = StringVector::new()?;
         check_status(unsafe {
             uhd_sys::uhd_usrp_get_rx_gain_names(self.0, channel as _, names.handle_mut())
+        })?;
+        Ok(names.into())
+    }
+
+    /// Returns the names of controllable gain elements
+    pub fn get_tx_gain_names(&self, channel: usize) -> Result<Vec<String>, Error> {
+        let mut names = StringVector::new()?;
+        check_status(unsafe {
+            uhd_sys::uhd_usrp_get_tx_gain_names(self.0, channel as _, names.handle_mut())
         })?;
         Ok(names.into())
     }
@@ -400,6 +409,39 @@ impl Usrp {
         Ok(streamer)
     }
 
+    pub fn get_tx_stream<I>(&self, args: &StreamArgs<I>, cap: usize) -> Result<TransmitStreamer< I>, Error> where I: Item,
+    {
+        let args: StreamArgsC = args.try_into()?;
+        let mut args_c = uhd_sys::uhd_stream_args_t {
+            cpu_format: args.host_format.as_ptr() as *mut _,
+            otw_format: args.wire_format.as_ptr() as *mut _,
+            args: args.args.as_ptr() as *mut _,
+            channel_list: args.channels.as_ptr() as *mut _,
+            n_channels: args
+                .channels
+                .len()
+                .try_into()
+                .expect("Number of channels too large"),
+        };
+        let mut streamer = TransmitStreamer::new(cap);
+        check_status(unsafe{
+            uhd_sys::uhd_tx_streamer_make(streamer.handle_mut() as *mut *mut _)
+        })?;
+        check_status(unsafe {
+            uhd_sys::uhd_usrp_get_tx_stream(self.0, &mut args_c, streamer.handle())
+        })?;
+        let mut buff_size: usize = streamer.buff_size();
+        check_status(unsafe {
+            uhd_sys::uhd_tx_streamer_max_num_samps(streamer.handle(), &mut buff_size as *mut _)
+        })?;
+        if buff_size!= streamer.buff_size(){
+            println!("Buffer size change: {}", buff_size);
+            streamer.set_len(buff_size);
+        }
+
+        Ok(streamer)
+    }
+
     /// Returns the current receive sample rate in samples/second
     pub fn get_rx_sample_rate(&self, channel: usize) -> Result<f64, Error> {
         let mut value = 0.0;
@@ -420,12 +462,13 @@ impl Usrp {
     pub fn get_current_time(&self, mboard: usize) -> Result<TimeSpec, Error> {
         let mut time = TimeSpec::default();
         let mut seconds_time_t: libc::time_t = Default::default();
+        let mut seconds_time_t_i64: i64 = seconds_time_t as i64;
 
         check_status(unsafe {
             uhd_sys::uhd_usrp_get_time_now(
                 self.0,
                 mboard as _,
-                &mut seconds_time_t,
+                &mut seconds_time_t_i64 as *mut i64,
                 &mut time.fraction,
             )
         })?;
@@ -484,6 +527,32 @@ impl Usrp {
         Ok(result)
     }
 
+     /// Sets the receive center frequency
+     pub fn set_tx_frequency(
+        &self,
+        request: &TuneRequest,
+        channel: usize,
+    ) -> Result<TuneResult, Error> {
+        let args = CString::new(&*request.args)?;
+        let mut request_c = uhd_sys::uhd_tune_request_t {
+            target_freq: request.target_frequency,
+            rf_freq_policy: request.rf.c_policy(),
+            rf_freq: request.rf.frequency(),
+            dsp_freq_policy: request.dsp.c_policy(),
+            dsp_freq: request.dsp.frequency(),
+            // Unsafe cast *const c_char to *mut c_char
+            // The C++ code probably won't modify this.
+            args: args.as_ptr() as *mut _,
+        };
+
+        let mut result = TuneResult::default();
+        check_status(unsafe {
+            uhd_sys::uhd_usrp_set_tx_freq(self.0, &mut request_c, channel as _, result.inner_mut())
+        })?;
+
+        Ok(result)
+    }
+
     /// Sets the receive gain
     pub fn set_rx_gain(&self, gain: f64, channel: usize, name: &str) -> Result<(), Error> {
         let name = CString::new(name)?;
@@ -492,9 +561,21 @@ impl Usrp {
         })
     }
 
+    pub fn set_tx_gain(&self, gain: f64, channel: usize, name: &str) -> Result<(), Error> {
+        let name = CString::new(name)?;
+        check_status(unsafe {
+            uhd_sys::uhd_usrp_set_tx_gain(self.0, gain, channel as _, name.as_ptr())
+        })
+    }
+
     /// Sets the receive sample rate
     pub fn set_rx_sample_rate(&self, rate: f64, channel: usize) -> Result<(), Error> {
         check_status(unsafe { uhd_sys::uhd_usrp_set_rx_rate(self.0, rate, channel as _) })
+    }
+
+    /// Sets the receive sample rate
+    pub fn set_tx_sample_rate(&self, rate: f64, channel: usize) -> Result<(), Error> {
+        check_status(unsafe { uhd_sys::uhd_usrp_set_tx_rate(self.0, rate, channel as _) })
     }
 
     /// Sets the antenna used to transmit

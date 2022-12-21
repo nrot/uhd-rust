@@ -15,18 +15,20 @@ fn main() {
         .include_paths
         .get(0)
         .expect("no include path for UHD headers");
-    generate_bindings(&uhd_include_path);
+    generate_bindings(&Path::new("./uhd/host/include/"));
 }
 
 fn generate_bindings(include_path: &Path) {
     let usrp_header = include_path.join("uhd.h");
 
-    let out_dir = PathBuf::from(env::var_os("OUT_DIR").unwrap());
+    // let out_dir = PathBuf::from(env::var_os("OUT_DIR").unwrap_or("src/".into()));
+    let out_dir = PathBuf::from("src/");
     let out_path = out_dir.join("bindgen.rs");
 
     let mut builder = bindgen::builder()
-        .whitelist_function("^uhd.+")
+        .allowlist_function("^uhd.+")
         .default_enum_style(bindgen::EnumVariation::ModuleConsts)
+        .allowlist_recursively(true)
         .header(usrp_header.to_string_lossy().to_owned())
         // Add the include directory to ensure that #includes in the header work correctly
         .clang_arg(format!("-I{}", include_path.to_string_lossy().to_owned()));

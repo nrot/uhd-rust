@@ -1,0 +1,3 @@
+[submodule "uhd-sys/uhd"]
+	path = uhd-sys/uhd
+	url = https://github.com/EttusResearch/uhd.git

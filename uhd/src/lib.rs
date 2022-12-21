@@ -23,6 +23,8 @@ pub mod range;
 mod receive_info;
 mod receive_metadata;
 mod receive_streamer;
+mod transmit_streamer;
+mod transmit_metadata;
 mod stream;
 mod string_vector;
 mod tune_request;
@@ -37,6 +39,8 @@ pub use crate::motherboard_eeprom::MotherboardEeprom;
 pub use crate::receive_info::ReceiveInfo;
 pub use crate::receive_metadata::*;
 pub use crate::receive_streamer::ReceiveStreamer;
+pub use crate::transmit_streamer::TransmitStreamer;
+pub use crate::transmit_metadata::*;
 pub use crate::stream::*;
 pub use crate::tune_request::*;
 pub use crate::tune_result::TuneResult;
@@ -53,4 +57,16 @@ pub struct TimeSpec {
     // an i64.
     pub seconds: i64,
     pub fraction: f64,
+}
+
+
+#[cfg(test)]
+mod test{
+    use crate::*;
+
+    #[test]
+    fn rx_samples(){
+        let mut uspr = Usrp::open("");
+        
+    }
 }

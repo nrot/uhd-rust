@@ -23,11 +23,12 @@ impl ReceiveMetadata {
         if self.has_time_spec() {
             let mut time = TimeSpec::default();
             let mut seconds_time_t: libc::time_t = Default::default();
+            let mut seconds_time_t_i64: i64 = seconds_time_t as i64;
 
             check_status(unsafe {
                 uhd_sys::uhd_rx_metadata_time_spec(
                     self.handle,
-                    &mut seconds_time_t,
+                    &mut seconds_time_t_i64 as *mut i64,
                     &mut time.fraction,
                 )
             })

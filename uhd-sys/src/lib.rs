@@ -8,4 +8,4 @@
 //! UHD documentation: [https://files.ettus.com/manual/](https://files.ettus.com/manual/)
 //!
 
-include!(concat!(env!("OUT_DIR"), "/bindgen.rs"));
+include!("./bindgen.rs");

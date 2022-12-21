@@ -1,6 +1,7 @@
 use std::marker::PhantomData;
 use std::ptr;
 
+use crate::TransmitMetadata;
 use crate::error::{check_status, Error};
 use crate::receive_metadata::ReceiveMetadata;
 use crate::stream::StreamCommand;
@@ -11,68 +12,61 @@ use std::os::raw::c_void;
 ///
 /// The type parameter I is the type of sample that this streamer receives.
 #[derive(Debug)]
-pub struct ReceiveStreamer<'usrp, I> {
+pub struct TransmitStreamer<I> {
     /// Streamer handle
-    handle: uhd_sys::uhd_rx_streamer_handle,
-    /// A vector of pointers to buffers (used in receive() to convert `&mut [&mut [I]]` to `*mut *mut I`
+    handle: uhd_sys::uhd_tx_streamer_handle,
+    /// A vector of pointers to buffers (used in transmit() to convert `&mut [&mut [I]]` to `*mut *mut I`
     /// without reallocating memory each time
     ///
     /// Invariant: If this is not empty, its length is equal to the value returned by
     /// self.num_channels().
     buffer_pointers: Vec<*mut c_void>,
     /// Link to the USRP that this streamer is associated with
-    usrp: PhantomData<&'usrp Usrp>,
+    // usrp: PhantomData<&'usrp Usrp>,
     /// Item type phantom data
     item_phantom: PhantomData<I>,
 }
 
-impl<I> ReceiveStreamer<'_, I> {
+
+impl<I> TransmitStreamer< I> {
     /// Creates a receive streamer with a null streamer handle (for internal use only)
     ///
     /// After creating a streamer with this function, its streamer handle must be initialized.
-    pub(crate) fn new() -> Self {
-        ReceiveStreamer {
+    pub(crate) fn new(capacity: usize) -> Self {
+        TransmitStreamer {
             handle: ptr::null_mut(),
-            buffer_pointers: Vec::new(),
-            usrp: PhantomData,
+            buffer_pointers: Vec::with_capacity(capacity),
+            // usrp: PhantomData,
             item_phantom: PhantomData,
         }
     }
 
-    pub(crate) fn with_capacity(cap: usize) -> Result<Self, Error> {
-        let mut rx_stream :uhd_sys::uhd_rx_streamer_handle = ptr::null_mut();
-        check_status(unsafe{uhd_sys::uhd_rx_streamer_make(&mut rx_stream)})?;
+    pub fn buff_size(&self)->usize{
+        self.buffer_pointers.capacity()
+    }
 
-        Ok(ReceiveStreamer {
-            handle: rx_stream,
-            buffer_pointers: Vec::with_capacity(cap),
-            usrp: PhantomData,
-            item_phantom: PhantomData,
-        })
+    pub(crate) fn set_len(&mut self, cap: usize){
+        unsafe {self.buffer_pointers.set_len(cap)};
+    }
+
+    pub fn buff_len(&self)->usize{
+        self.buffer_pointers.len()
     }
 
     /// Returns a reference to the streamer handle
-    pub(crate) fn handle_mut(&mut self) -> &mut uhd_sys::uhd_rx_streamer_handle {
+    pub(crate) fn handle_mut(&mut self) -> &mut uhd_sys::uhd_tx_streamer_handle {
         &mut self.handle
     }
     /// Returns the streamer handle
-    pub(crate) fn handle(&mut self) -> uhd_sys::uhd_rx_streamer_handle {
+    pub(crate) fn handle(&mut self) -> uhd_sys::uhd_tx_streamer_handle {
         self.handle
-    }
-
-    /// Sends a stream command to the USRP
-    ///
-    /// This can be used to start or stop streaming
-    pub fn send_command(&self, command: &StreamCommand) -> Result<(), Error> {
-        let command_c = command.as_c_command();
-        check_status(unsafe { uhd_sys::uhd_rx_streamer_issue_stream_cmd(self.handle, &command_c) })
     }
 
     /// Returns the number of channels that this streamer is associated with
     pub fn num_channels(&self) -> usize {
         let mut num_channels = 0usize;
         check_status(unsafe {
-            uhd_sys::uhd_rx_streamer_num_channels(
+            uhd_sys::uhd_tx_streamer_num_channels(
                 self.handle,
                 &mut num_channels as *mut usize as *mut _,
             )
@@ -94,13 +88,12 @@ impl<I> ReceiveStreamer<'_, I> {
     ///
     /// On success, this function returns a ReceiveMetadata object with information about
     /// the number of samples actually received.
-    pub fn receive(
+    pub fn send(
         &mut self,
         buffers: &mut [&mut [I]],
         timeout: f64,
-        one_packet: bool,
-    ) -> Result<ReceiveMetadata, Error> {
-        let mut metadata = ReceiveMetadata::default();
+    ) -> Result<(), Error> {
+        let mut metadata = TransmitMetadata::default();
         let mut samples_received = 0usize;
 
         // Initialize buffer_pointers
@@ -110,7 +103,7 @@ impl<I> ReceiveStreamer<'_, I> {
         }
         // Now buffer_pointers.len() is equal to self.num_channels().
         assert_eq!(
-            buffers.len(),
+            buffers[0].len(),
             self.buffer_pointers.len(),
             "Number of buffers is not equal to this streamer's number of channels"
         );
@@ -123,25 +116,20 @@ impl<I> ReceiveStreamer<'_, I> {
         }
 
         check_status(unsafe {
-            uhd_sys::uhd_rx_streamer_recv(
+            uhd_sys::uhd_tx_streamer_send(
                 self.handle,
-                self.buffer_pointers.as_mut_ptr(),
+                self.buffer_pointers.as_mut_ptr() as *mut *const _,
                 buffer_length as _,
                 metadata.handle_mut(),
                 timeout,
-                one_packet,
                 &mut samples_received as *mut usize as *mut _,
             )
         })?;
         metadata.set_samples(samples_received);
 
-        Ok(metadata)
+        Ok(())
     }
 
-    /// Receives samples on a single channel with a timeout of 0.1 seconds and one_packet disabled
-    pub fn receive_simple(&mut self, buffer: &mut [I]) -> Result<ReceiveMetadata, Error> {
-        self.receive(&mut [buffer], 0.1, false)
-    }
 }
 
 /// Checks that all provided buffers have the same length. Returns the length of the buffers,
@@ -164,15 +152,15 @@ fn check_equal_buffer_lengths<I>(buffers: &mut [&mut [I]]) -> usize {
         .unwrap_or(0)
 }
 
-impl<I> Drop for ReceiveStreamer<'_, I> {
+impl<I> Drop for TransmitStreamer< I> {
     fn drop(&mut self) {
-        let _ = unsafe { uhd_sys::uhd_rx_streamer_free(&mut self.handle) };
+        let _ = unsafe { uhd_sys::uhd_tx_streamer_free(&mut self.handle) };
     }
 }
 
 // Thread safety: see https://files.ettus.com/manual/page_general.html#general_threading
-// All functions are thread-safe, except that the uhd_tx_streamer send(), uhd_rx_streamer recv(), and
-// uhd_rx_streamer recv_async_msg() functions. The corresponding Rust wrapper functions take &mut
+// All functions are thread-safe, except that the uhd_tx_streamer send(), uhd_tx_streamer recv(), and
+// uhd_tx_streamer recv_async_msg() functions. The corresponding Rust wrapper functions take &mut
 // self, which enforces single-thread access.
-unsafe impl<I> Send for ReceiveStreamer<'_, I> {}
-unsafe impl<I> Sync for ReceiveStreamer<'_, I> {}
+unsafe impl<I> Send for TransmitStreamer< I> {}
+unsafe impl<I> Sync for TransmitStreamer< I> {}
