@@ -108,6 +108,13 @@ impl Usrp {
         Ok(value)
     }
 
+    /// Returns the current transmit frequency
+    pub fn get_tx_frequency(&self, channel: usize) -> Result<f64, Error> {
+        let mut value = 0.0;
+        check_status(unsafe { uhd_sys::uhd_usrp_get_tx_freq(self.0, channel as _, &mut value) })?;
+        Ok(value)
+    }
+
     /// Returns the supported range of receive frequencies
     pub fn get_rx_frequency_range(&self, channel: usize) -> Result<MetaRange, Error> {
         let mut range = MetaRange::default();
