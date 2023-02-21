@@ -127,17 +127,25 @@ pub trait Item {
     const FORMAT: &'static str;
 }
 
-impl Item for Complex64 {
+pub trait InnerItem{
+    const FORMAT: &'static str;
+}
+
+impl InnerItem for f64 {
     const FORMAT: &'static str = "fc64";
 }
-impl Item for Complex32 {
+impl InnerItem for f32 {
     const FORMAT: &'static str = "fc32";
 }
-impl Item for Complex<i16> {
+impl InnerItem for i16 {
     const FORMAT: &'static str = "sc16";
 }
-impl Item for Complex<i8> {
+impl InnerItem for i8 {
     const FORMAT: &'static str = "sc8";
+}
+
+impl<T: InnerItem> Item for Complex<T> {
+    const FORMAT: &'static str = T::FORMAT;
 }
 
 /// A stream command that can be sent to a USRP to control streaming
